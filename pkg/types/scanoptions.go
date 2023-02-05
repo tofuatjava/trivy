@@ -1,11 +1,17 @@
 package types
 
+import (
+	"github.com/aquasecurity/trivy/pkg/fanal/types"
+)
+
 // ScanOptions holds the attributes for scanning vulnerabilities
 type ScanOptions struct {
 	VulnType            []string
-	SecurityChecks      []string
+	Scanners            Scanners
+	ImageConfigScanners Scanners // Scanners for container image configuration
 	ScanRemovedPackages bool
+	Platform            string
 	ListAllPackages     bool
-	SkipFiles           []string
-	SkipDirs            []string
+	LicenseCategories   map[types.LicenseCategory][]string
+	FilePatterns        []string
 }

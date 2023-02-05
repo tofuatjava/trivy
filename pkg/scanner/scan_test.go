@@ -8,9 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/aquasecurity/fanal/artifact"
-	ftypes "github.com/aquasecurity/fanal/types"
-	"github.com/aquasecurity/trivy/pkg/report"
+	"github.com/aquasecurity/trivy/pkg/fanal/artifact"
+	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/types"
 )
 
@@ -23,7 +22,7 @@ func TestScanner_ScanArtifact(t *testing.T) {
 		args               args
 		inspectExpectation artifact.ArtifactInspectExpectation
 		scanExpectation    DriverScanExpectation
-		want               report.Report
+		want               types.Report
 		wantErr            string
 	}{
 		{
@@ -38,6 +37,7 @@ func TestScanner_ScanArtifact(t *testing.T) {
 				Returns: artifact.ArtifactInspectReturns{
 					Reference: ftypes.ArtifactReference{
 						Name:    "alpine:3.11",
+						Type:    ftypes.ArtifactContainerImage,
 						ID:      "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
 						BlobIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
 						ImageMetadata: ftypes.ImageMetadata{
@@ -51,13 +51,14 @@ func TestScanner_ScanArtifact(t *testing.T) {
 			},
 			scanExpectation: DriverScanExpectation{
 				Args: DriverScanArgs{
-					Target:   "alpine:3.11",
-					ImageID:  "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
-					Options:  types.ScanOptions{VulnType: []string{"os"}},
+					CtxAnything: true,
+					Target:      "alpine:3.11",
+					ImageID:     "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
+					LayerIDs:    []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					Options:     types.ScanOptions{VulnType: []string{"os"}},
 				},
 				Returns: DriverScanReturns{
-					Results: report.Results{
+					Results: types.Results{
 						{
 							Target: "alpine:3.11",
 							Vulnerabilities: []types.DetectedVulnerability{
@@ -86,17 +87,18 @@ func TestScanner_ScanArtifact(t *testing.T) {
 							Type: "npm",
 						},
 					},
-					OsFound: &ftypes.OS{
+					OsFound: ftypes.OS{
 						Family: "alpine",
 						Name:   "3.10",
 						Eosl:   true,
 					},
 				},
 			},
-			want: report.Report{
+			want: types.Report{
 				SchemaVersion: 2,
 				ArtifactName:  "alpine:3.11",
-				Metadata: report.Metadata{
+				ArtifactType:  ftypes.ArtifactContainerImage,
+				Metadata: types.Metadata{
 					OS: &ftypes.OS{
 						Family: "alpine",
 						Name:   "3.10",
@@ -107,7 +109,7 @@ func TestScanner_ScanArtifact(t *testing.T) {
 					RepoTags:    []string{"alpine:3.11"},
 					RepoDigests: []string{"alpine@sha256:0bd0e9e03a022c3b0226667621da84fc9bf562a9056130424b5bfbd8bcb0397f"},
 				},
-				Results: report.Results{
+				Results: types.Results{
 					{
 						Target: "alpine:3.11",
 						Vulnerabilities: []types.DetectedVulnerability{
@@ -172,10 +174,11 @@ func TestScanner_ScanArtifact(t *testing.T) {
 			},
 			scanExpectation: DriverScanExpectation{
 				Args: DriverScanArgs{
-					Target:   "alpine:3.11",
-					ImageID:  "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
-					LayerIDs: []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
-					Options:  types.ScanOptions{VulnType: []string{"os"}},
+					CtxAnything: true,
+					Target:      "alpine:3.11",
+					ImageID:     "sha256:e7d92cdc71feacf90708cb59182d0df1b911f8ae022d29e8e95d75ca6a99776a",
+					LayerIDs:    []string{"sha256:5216338b40a7b96416b8b9858974bbe4acc3096ee60acbc4dfb1ee02aecceb10"},
+					Options:     types.ScanOptions{VulnType: []string{"os"}},
 				},
 				Returns: DriverScanReturns{
 					Err: errors.New("error"),

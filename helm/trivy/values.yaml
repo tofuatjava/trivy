@@ -4,7 +4,9 @@ fullnameOverride: ""
 image:
   registry: docker.io
   repository: aquasec/trivy
-  tag: 0.18.3
+  # tag is an override of the image tag, which is by default set by the
+  # appVersion field in Chart.yaml.
+  tag: ""
   pullPolicy: IfNotPresent
   pullSecret: ""
 
@@ -26,7 +28,7 @@ resources:
 
 rbac:
   create: true
-  pspEnabled: true
+  pspEnabled: false
 
 podSecurityContext:
   runAsUser: 65534
@@ -49,6 +51,10 @@ affinity: {}
 ## Ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
 tolerations: []
 
+## Annotations for pods created by statefulset
+## Ref: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
+podAnnotations: {}
+
 trivy:
   # debugMode the flag to enable Trivy debug mode
   debugMode: false
@@ -68,12 +74,33 @@ trivy:
   # You can create a GitHub token by following the instructions in
   # https://help.github.com/en/github/authenticating-to-github/creating-a-personal-access-token-for-the-command-line
   gitHubToken: ""
+
+  # Docker registry credentials
+  # See also: https://aquasecurity.github.io/trivy/dev/advanced/private-registries/docker-hub/
+  #
+  # Either
+  # Directly in this file
+  #
+  # TRIVY_USERNAME
+  registryUsername: ""
+  # TRIVY_PASSWORD
+  registryPassword: ""
+  #
+  # Or
+  # From an existing secret
+  #
+  # The secret must be Opaque and just contain "TRIVY_USERNAME: your_user" and "TRIVY_PASSWORD: your_password" as k/v pairs.
+  # NOTE: When this is set the previous parameters are ignored.
+  #
+  # registryCredentialsExistingSecret: name-of-existing-secret
   # skipUpdate the flag to enable or disable Trivy DB downloads from GitHub
   #
   # You might want to enable this flag in test or CI/CD environments to avoid GitHub rate limiting issues.
   # If the flag is enabled you have to manually download the `trivy.db` file and mount it in the
   # `/home/scanner/.cache/trivy/db/trivy.db` path (see `cacheDir`).
   skipUpdate: false
+  # OCI repository to retrieve the trivy vulnerability database from
+  dbRepository: ghcr.io/aquasecurity/trivy-db
   # Trivy supports filesystem and redis as caching backend
   # https://github.com/aquasecurity/trivy#specify-cache-backend
   # This location is only used for the cache, not the db storage: https://github.com/aquasecurity/trivy/issues/765#issue-756010345
@@ -85,9 +112,24 @@ trivy:
   cache:
     redis:
       enabled: false
-      url: "" # e.g. redis://redis.redis.svc:6379
+      url: ""  # e.g. redis://redis.redis.svc:6379
+      ttl: ""  # e.g 3600s, 24h
+  serviceAccount:
+    annotations: {}
+      # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/IAM_ROLE_NAME
+  # If you want to add custom labels to your statefulset and podTemplate
+  labels: {}
+  # serverToken is the token to authenticate Trivy client with Trivy server.
+  serverToken: ""
+  # existingSecret if an existing secret has been created outside the chart.
+  # Overrides gitHubToken, registryUsername, registryPassword, serverToken
+  existingSecret: ""
+  # extraEnvVars to be set on the container
+  extraEnvVars: {}
 
 service:
+  # If specified, the name used for the Trivy service.
+  name:
   # type Kubernetes service type
   type: ClusterIP
   # port Kubernetes service port
@@ -95,11 +137,15 @@ service:
 
 ingress:
   enabled: false
+  # From Kubernetes 1.18+ this field is supported in case your ingress controller supports it. When set, you do not need to add the ingress class as annotation.
+  ingressClassName:
   annotations: {}
     # kubernetes.io/ingress.class: nginx
   hosts:
     - host: trivy.example.com
   path: "/"
+  # type is only needed for networking.k8s.io/v1 in k8s 1.19+
+  pathType: Prefix
   tls: []
   #  - secretName: trivy-example-tls
   #    hosts:

@@ -9,10 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 	fake "k8s.io/utils/clock/testing"
 
-	ftypes "github.com/aquasecurity/fanal/types"
 	"github.com/aquasecurity/trivy-db/pkg/db"
+	dbTypes "github.com/aquasecurity/trivy-db/pkg/types"
+	"github.com/aquasecurity/trivy-db/pkg/vulnsrc/vulnerability"
 	"github.com/aquasecurity/trivy/pkg/dbtest"
 	"github.com/aquasecurity/trivy/pkg/detector/ospkg/ubuntu"
+	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/types"
 )
 
@@ -30,7 +32,7 @@ func TestScanner_Detect(t *testing.T) {
 	}{
 		{
 			name:     "happy path",
-			fixtures: []string{"testdata/fixtures/ubuntu.yaml"},
+			fixtures: []string{"testdata/fixtures/ubuntu.yaml", "testdata/fixtures/data-source.yaml"},
 			args: args{
 				osVer: "20.04",
 				pkgs: []ftypes.Package{
@@ -54,6 +56,11 @@ func TestScanner_Detect(t *testing.T) {
 					Layer: ftypes.Layer{
 						DiffID: "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					},
+					DataSource: &dbTypes.DataSource{
+						ID:   vulnerability.Ubuntu,
+						Name: "Ubuntu CVE Tracker",
+						URL:  "https://git.launchpad.net/ubuntu-cve-tracker",
+					},
 				},
 				{
 					PkgName:          "wpa",
@@ -63,12 +70,17 @@ func TestScanner_Detect(t *testing.T) {
 					Layer: ftypes.Layer{
 						DiffID: "sha256:932da51564135c98a49a34a193d6cd363d8fa4184d957fde16c9d8527b3f3b02",
 					},
+					DataSource: &dbTypes.DataSource{
+						ID:   vulnerability.Ubuntu,
+						Name: "Ubuntu CVE Tracker",
+						URL:  "https://git.launchpad.net/ubuntu-cve-tracker",
+					},
 				},
 			},
 		},
 		{
 			name:     "broken bucket",
-			fixtures: []string{"testdata/fixtures/invalid.yaml"},
+			fixtures: []string{"testdata/fixtures/invalid.yaml", "testdata/fixtures/data-source.yaml"},
 			args: args{
 				osVer: "21.04",
 				pkgs: []ftypes.Package{
@@ -89,7 +101,7 @@ func TestScanner_Detect(t *testing.T) {
 			defer db.Close()
 
 			s := ubuntu.NewScanner()
-			got, err := s.Detect(tt.args.osVer, tt.args.pkgs)
+			got, err := s.Detect(tt.args.osVer, nil, tt.args.pkgs)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)

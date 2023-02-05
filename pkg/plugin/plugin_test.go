@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,6 +15,10 @@ import (
 )
 
 func TestPlugin_Run(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// the test.sh script can't be run on windows so skipping
+		t.Skip("Test satisfied adequately by Linux tests")
+	}
 	type fields struct {
 		Name        string
 		Repository  string
@@ -169,6 +174,10 @@ func TestPlugin_Run(t *testing.T) {
 }
 
 func TestInstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// the test.sh script can't be run on windows so skipping
+		t.Skip("Test satisfied adequately by Linux tests")
+	}
 	tests := []struct {
 		name     string
 		url      string
@@ -272,6 +281,10 @@ func TestInstall(t *testing.T) {
 }
 
 func TestUninstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// the test.sh script can't be run on windows so skipping
+		t.Skip("Test satisfied adequately by Linux tests")
+	}
 	pluginName := "test_plugin"
 
 	tempDir := t.TempDir()
@@ -291,7 +304,48 @@ func TestUninstall(t *testing.T) {
 	assert.NoFileExists(t, pluginDir)
 }
 
+func TestInformation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// the test.sh script can't be run on windows so skipping
+		t.Skip("Test satisfied adequately by Linux tests")
+	}
+	pluginName := "test_plugin"
+
+	tempDir := t.TempDir()
+	pluginDir := filepath.Join(tempDir, ".trivy", "plugins", pluginName)
+
+	t.Setenv("XDG_DATA_HOME", tempDir)
+
+	// Create the test plugin directory
+	err := os.MkdirAll(pluginDir, os.ModePerm)
+	require.NoError(t, err)
+
+	// write the plugin name
+	pluginMetadata := `name: "test_plugin"
+repository: github.com/aquasecurity/trivy-plugin-test
+version: "0.1.0"
+usage: test
+description: A simple test plugin`
+
+	err = os.WriteFile(filepath.Join(pluginDir, "plugin.yaml"), []byte(pluginMetadata), os.ModePerm)
+	require.NoError(t, err)
+
+	// Get Information for the plugin
+	info, err := plugin.Information(pluginName)
+	require.NoError(t, err)
+	assert.Equal(t, "\nPlugin: test_plugin\n  Description: A simple test plugin\n  Version:     0.1.0\n  Usage:       test\n", info)
+
+	// Get Information for unknown plugin
+	info, err = plugin.Information("unknown")
+	require.Error(t, err)
+	assert.Equal(t, "could not find a plugin called 'unknown', did you install it?", err.Error())
+}
+
 func TestLoadAll1(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// the test.sh script can't be run on windows so skipping
+		t.Skip("Test satisfied adequately by Linux tests")
+	}
 	tests := []struct {
 		name    string
 		dir     string
@@ -343,5 +397,52 @@ func TestLoadAll1(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func TestUpdate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// the test.sh script can't be run on windows so skipping
+		t.Skip("Test satisfied adequately by Linux tests")
+	}
+	pluginName := "test_plugin"
+
+	tempDir := t.TempDir()
+	pluginDir := filepath.Join(tempDir, ".trivy", "plugins", pluginName)
+
+	t.Setenv("XDG_DATA_HOME", tempDir)
+
+	// Create the test plugin directory
+	err := os.MkdirAll(pluginDir, os.ModePerm)
+	require.NoError(t, err)
+
+	// write the plugin name
+	pluginMetadata := `name: "test_plugin"
+repository: testdata/test_plugin
+version: "0.0.5"
+usage: test
+description: A simple test plugin`
+
+	err = os.WriteFile(filepath.Join(pluginDir, "plugin.yaml"), []byte(pluginMetadata), os.ModePerm)
+	require.NoError(t, err)
+
+	// verify initial version
+	verifyVersion(t, pluginName, "0.0.5")
+
+	// Update the existing plugin
+	err = plugin.Update(pluginName)
+	require.NoError(t, err)
+
+	// verify plugin updated
+	verifyVersion(t, pluginName, "0.1.0")
+}
+
+func verifyVersion(t *testing.T, pluginName, expectedVersion string) {
+	plugins, err := plugin.LoadAll()
+	require.NoError(t, err)
+	for _, plugin := range plugins {
+		if plugin.Name == pluginName {
+			assert.Equal(t, expectedVersion, plugin.Version)
+		}
 	}
 }

@@ -1,15 +1,18 @@
 package utils
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/xerrors"
+)
 
-	"github.com/aquasecurity/trivy/pkg/log"
+const (
+	xdgDataHome = "XDG_DATA_HOME"
 )
 
 var cacheDir string
@@ -33,80 +36,21 @@ func SetCacheDir(dir string) {
 	cacheDir = dir
 }
 
-// FileWalk walks the directory and performs operations on files defined by walkFn
-func FileWalk(root string, targetFiles map[string]struct{}, walkFn func(r io.Reader, path string) error) error {
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return xerrors.Errorf("error in filepath rel: %w", err)
-		}
-
-		if _, ok := targetFiles[rel]; !ok {
-			return nil
-		}
-
-		if info.Size() == 0 {
-			log.Logger.Debugf("invalid size: %s", path)
-			return nil
-		}
-
-		f, err := os.Open(path)
-		if err != nil {
-			return xerrors.Errorf("failed to open file: %w", err)
-		}
-		defer f.Close()
-
-		if err = walkFn(f, path); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return xerrors.Errorf("error in file walk: %w", err)
+func HomeDir() string {
+	dataHome := os.Getenv(xdgDataHome)
+	if dataHome != "" {
+		return dataHome
 	}
-	return nil
-}
 
-// StringInSlice checks if strings exist in list of strings
-func StringInSlice(a string, list []string) bool {
-	for _, b := range list {
-		if b == a {
-			return true
-		}
-	}
-	return false
-}
-
-// FilterTargets filters the target based on prefixPath
-func FilterTargets(prefixPath string, targets map[string]struct{}) (map[string]struct{}, error) {
-	filtered := map[string]struct{}{}
-	for filename := range targets {
-		if strings.HasPrefix(filename, prefixPath) {
-			rel, err := filepath.Rel(prefixPath, filename)
-			if err != nil {
-				return nil, xerrors.Errorf("error in filepath rel: %w", err)
-			}
-			if strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				continue
-			}
-			filtered[rel] = struct{}{}
-		}
-	}
-	return filtered, nil
+	homeDir, _ := os.UserHomeDir()
+	return homeDir
 }
 
 // CopyFile copies the file content from scr to dst
 func CopyFile(src, dst string) (int64, error) {
 	sourceFileStat, err := os.Stat(src)
 	if err != nil {
-		return 0, err
+		return 0, xerrors.Errorf("file (%s) stat error: %w", src, err)
 	}
 
 	if !sourceFileStat.Mode().IsRegular() {
@@ -126,4 +70,22 @@ func CopyFile(src, dst string) (int64, error) {
 	defer destination.Close()
 	n, err := io.Copy(destination, source)
 	return n, err
+}
+
+// GetTLSConfig get tls config from CA, Cert and Key file
+func GetTLSConfig(caCertPath, certPath, keyPath string) (*x509.CertPool, tls.Certificate, error) {
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, tls.Certificate{}, err
+	}
+
+	caCert, err := os.ReadFile(caCertPath)
+	if err != nil {
+		return nil, tls.Certificate{}, err
+	}
+
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+
+	return caCertPool, cert, nil
 }

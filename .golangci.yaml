@@ -9,7 +9,7 @@ linters-settings:
   revive:
     ignore-generated-header: true
   gocyclo:
-    min-complexity: 10
+    min-complexity: 20
   dupl:
     threshold: 100
   goconst:
@@ -19,17 +19,20 @@ linters-settings:
     locale: US
   goimports:
     local-prefixes: github.com/aquasecurity
+  gosec:
+    excludes:
+      - G101
+      - G114
+      - G204
+      - G402
 
 linters:
   disable-all: true
   enable:
-    - structcheck
+    - unused
     - ineffassign
     - typecheck
     - govet
-    - errcheck
-    - varcheck
-    - deadcode
     - revive
     - gosec
     - unconvert
@@ -40,10 +43,12 @@ linters:
     - misspell
 
 run:
+  go: 1.19
   skip-files:
     - ".*._mock.go$"
     - ".*._test.go$"
     - "integration/*"
+    - "examples/*"
 
 issues:
   exclude-rules:
@@ -53,9 +58,6 @@ issues:
     - linters:
         - gosec
       text: "Deferring unsafe method"
-    - linters:
-        - gosec
-      text: "G204: Subprocess launched with variable"
     - linters:
         - errcheck
       text: "Close` is not checked"

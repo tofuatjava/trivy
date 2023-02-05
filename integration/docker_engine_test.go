@@ -7,246 +7,198 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types"
+	api "github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/aquasecurity/trivy/pkg/commands"
 )
 
-func TestRun_WithDockerEngine(t *testing.T) {
-	testCases := []struct {
-		name                string
-		withImageSubcommand bool
-		imageTag            string
-		invalidImage        bool
-		ignoreUnfixed       bool
-		severity            []string
-		ignoreIDs           []string
-		testfile            string
-		expectedOutputFile  string
-		expectedError       string
+func TestDockerEngine(t *testing.T) {
+	tests := []struct {
+		name          string
+		imageTag      string
+		invalidImage  bool
+		ignoreUnfixed bool
+		severity      []string
+		ignoreIDs     []string
+		input         string
+		golden        string
+		wantErr       string
 	}{
-		// All of these cases should pass for either
-		// $ trivy <args>
-		// $ trivy image <args>
 		{
-			name:               "happy path, valid image path, alpine:3.10",
-			imageTag:           "alpine:3.10",
-			expectedOutputFile: "testdata/alpine-310.json.golden",
-			testfile:           "testdata/fixtures/images/alpine-310.tar.gz",
+			name:     "alpine:3.9",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:alpine-39",
+			input:    "testdata/fixtures/images/alpine-39.tar.gz",
+			golden:   "testdata/alpine-39.json.golden",
 		},
 		{
-			name:                "happy path, valid image path, with image subcommand, alpine:3.10",
-			withImageSubcommand: true,
-			imageTag:            "alpine:3.10",
-			expectedOutputFile:  "testdata/alpine-310.json.golden",
-			testfile:            "testdata/fixtures/images/alpine-310.tar.gz",
+			name:     "alpine:3.9, with high and critical severity",
+			severity: []string{"HIGH", "CRITICAL"},
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:alpine-39",
+			input:    "testdata/fixtures/images/alpine-39.tar.gz",
+			golden:   "testdata/alpine-39-high-critical.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, alpine:3.10, ignore unfixed",
-			ignoreUnfixed:      true,
-			imageTag:           "alpine:3.10",
-			expectedOutputFile: "testdata/alpine-310-ignore-unfixed.json.golden",
-			testfile:           "testdata/fixtures/images/alpine-310.tar.gz",
+			name:      "alpine:3.9, with .trivyignore",
+			imageTag:  "ghcr.io/aquasecurity/trivy-test-images:alpine-39",
+			ignoreIDs: []string{"CVE-2019-1549", "CVE-2019-14697"},
+			input:     "testdata/fixtures/images/alpine-39.tar.gz",
+			golden:    "testdata/alpine-39-ignore-cveids.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, alpine:3.10, ignore unfixed, with medium and high severity",
-			ignoreUnfixed:      true,
-			severity:           []string{"MEDIUM", "HIGH"},
-			imageTag:           "alpine:3.10",
-			expectedOutputFile: "testdata/alpine-310-medium-high.json.golden",
-			testfile:           "testdata/fixtures/images/alpine-310.tar.gz",
+			name:     "alpine:3.10",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:alpine-310",
+			input:    "testdata/fixtures/images/alpine-310.tar.gz",
+			golden:   "testdata/alpine-310.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, alpine:3.10, with .trivyignore",
-			imageTag:           "alpine:3.10",
-			ignoreIDs:          []string{"CVE-2019-1549", "CVE-2019-1563"},
-			expectedOutputFile: "testdata/alpine-310-ignore-cveids.json.golden",
-			testfile:           "testdata/fixtures/images/alpine-310.tar.gz",
+			name:     "amazonlinux:1",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:amazon-1",
+			input:    "testdata/fixtures/images/amazon-1.tar.gz",
+			golden:   "testdata/amazon-1.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, alpine:3.9",
-			imageTag:           "alpine:3.9",
-			expectedOutputFile: "testdata/alpine-39.json.golden",
-			testfile:           "testdata/fixtures/images/alpine-39.tar.gz",
+			name:     "amazonlinux:2",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:amazon-2",
+			input:    "testdata/fixtures/images/amazon-2.tar.gz",
+			golden:   "testdata/amazon-2.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, amazonlinux:1",
-			imageTag:           "amazonlinux:1",
-			expectedOutputFile: "testdata/amazon-1.json.golden",
-			testfile:           "testdata/fixtures/images/amazon-1.tar.gz",
+			name:     "almalinux 8",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:almalinux-8",
+			input:    "testdata/fixtures/images/almalinux-8.tar.gz",
+			golden:   "testdata/almalinux-8.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, amazonlinux:2",
-			imageTag:           "amazonlinux:2",
-			expectedOutputFile: "testdata/amazon-2.json.golden",
-			testfile:           "testdata/fixtures/images/amazon-2.tar.gz",
+			name:     "rocky linux 8",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:rockylinux-8",
+			input:    "testdata/fixtures/images/rockylinux-8.tar.gz",
+			golden:   "testdata/rockylinux-8.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, centos:6",
-			imageTag:           "centos:6",
-			expectedOutputFile: "testdata/centos-6.json.golden",
-			testfile:           "testdata/fixtures/images/centos-6.tar.gz",
+			name:     "centos 6",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:centos-6",
+			input:    "testdata/fixtures/images/centos-6.tar.gz",
+			golden:   "testdata/centos-6.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, centos:7",
-			imageTag:           "centos:7",
-			expectedOutputFile: "testdata/centos-7.json.golden",
-			testfile:           "testdata/fixtures/images/centos-7.tar.gz",
+			name:     "centos 7",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:centos-7",
+			input:    "testdata/fixtures/images/centos-7.tar.gz",
+			golden:   "testdata/centos-7.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, centos:7, with --ignore-unfixed option",
-			imageTag:           "centos:7",
-			ignoreUnfixed:      true,
-			expectedOutputFile: "testdata/centos-7-ignore-unfixed.json.golden",
-			testfile:           "testdata/fixtures/images/centos-7.tar.gz",
+			name:          "centos 7, with --ignore-unfixed option",
+			imageTag:      "ghcr.io/aquasecurity/trivy-test-images:centos-7",
+			ignoreUnfixed: true,
+			input:         "testdata/fixtures/images/centos-7.tar.gz",
+			golden:        "testdata/centos-7-ignore-unfixed.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, centos:7, with --ignore-unfixed option, with low and high severity",
-			imageTag:           "centos:7",
-			ignoreUnfixed:      true,
-			severity:           []string{"LOW", "HIGH"},
-			expectedOutputFile: "testdata/centos-7-low-high.json.golden",
-			testfile:           "testdata/fixtures/images/centos-7.tar.gz",
+			name:          "centos 7, with --ignore-unfixed option, with medium severity",
+			imageTag:      "ghcr.io/aquasecurity/trivy-test-images:centos-7",
+			ignoreUnfixed: true,
+			severity:      []string{"MEDIUM"},
+			input:         "testdata/fixtures/images/centos-7.tar.gz",
+			golden:        "testdata/centos-7-medium.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, debian:buster",
-			imageTag:           "debian:buster",
-			expectedOutputFile: "testdata/debian-buster.json.golden",
-			testfile:           "testdata/fixtures/images/debian-buster.tar.gz",
+			name:     "registry.redhat.io/ubi7",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:ubi-7",
+			input:    "testdata/fixtures/images/ubi-7.tar.gz",
+			golden:   "testdata/ubi-7.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, debian:buster, with --ignore-unfixed option",
-			ignoreUnfixed:      true,
-			imageTag:           "debian:buster",
-			expectedOutputFile: "testdata/debian-buster-ignore-unfixed.json.golden",
-			testfile:           "testdata/fixtures/images/debian-buster.tar.gz",
+			name:     "debian buster/10",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:debian-buster",
+			input:    "testdata/fixtures/images/debian-buster.tar.gz",
+			golden:   "testdata/debian-buster.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, debian:stretch",
-			imageTag:           "debian:stretch",
-			expectedOutputFile: "testdata/debian-stretch.json.golden",
-			testfile:           "testdata/fixtures/images/debian-stretch.tar.gz",
+			name:          "debian buster/10, with --ignore-unfixed option",
+			ignoreUnfixed: true,
+			imageTag:      "ghcr.io/aquasecurity/trivy-test-images:debian-buster",
+			input:         "testdata/fixtures/images/debian-buster.tar.gz",
+			golden:        "testdata/debian-buster-ignore-unfixed.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, distroless:base",
-			imageTag:           "gcr.io/distroless/base:latest",
-			expectedOutputFile: "testdata/distroless-base.json.golden",
-			testfile:           "testdata/fixtures/images/distroless-base.tar.gz",
+			name:     "debian stretch/9",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:debian-stretch",
+			input:    "testdata/fixtures/images/debian-stretch.tar.gz",
+			golden:   "testdata/debian-stretch.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, distroless:base",
-			imageTag:           "gcr.io/distroless/base:latest",
-			expectedOutputFile: "testdata/distroless-base.json.golden",
-			testfile:           "testdata/fixtures/images/distroless-base.tar.gz",
+			name:     "distroless base",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:distroless-base",
+			input:    "testdata/fixtures/images/distroless-base.tar.gz",
+			golden:   "testdata/distroless-base.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, distroless:base, with --ignore-unfixed option",
-			imageTag:           "gcr.io/distroless/base:latest",
-			ignoreUnfixed:      true,
-			expectedOutputFile: "testdata/distroless-base-ignore-unfixed.json.golden",
-			testfile:           "testdata/fixtures/images/distroless-base.tar.gz",
+			name:     "distroless python2.7",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:distroless-python27",
+			input:    "testdata/fixtures/images/distroless-python27.tar.gz",
+			golden:   "testdata/distroless-python27.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, distroless:python2.7",
-			imageTag:           "gcr.io/distroless/python2.7:latest",
-			expectedOutputFile: "testdata/distroless-python27.json.golden",
-			testfile:           "testdata/fixtures/images/distroless-python27.tar.gz",
+			name:     "oracle linux 8",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:oraclelinux-8",
+			input:    "testdata/fixtures/images/oraclelinux-8.tar.gz",
+			golden:   "testdata/oraclelinux-8.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, oraclelinux:6-slim",
-			imageTag:           "oraclelinux:6-slim",
-			expectedOutputFile: "testdata/oraclelinux-6-slim.json.golden",
-			testfile:           "testdata/fixtures/images/oraclelinux-6-slim.tar.gz",
+			name:     "ubuntu 18.04",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:ubuntu-1804",
+			input:    "testdata/fixtures/images/ubuntu-1804.tar.gz",
+			golden:   "testdata/ubuntu-1804.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, oraclelinux:7-slim",
-			imageTag:           "oraclelinux:7-slim",
-			expectedOutputFile: "testdata/oraclelinux-7-slim.json.golden",
-			testfile:           "testdata/fixtures/images/oraclelinux-7-slim.tar.gz",
+			name:          "ubuntu 18.04, with --ignore-unfixed option",
+			imageTag:      "ghcr.io/aquasecurity/trivy-test-images:ubuntu-1804",
+			ignoreUnfixed: true,
+			input:         "testdata/fixtures/images/ubuntu-1804.tar.gz",
+			golden:        "testdata/ubuntu-1804-ignore-unfixed.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, oraclelinux:8-slim",
-			imageTag:           "oraclelinux:8-slim",
-			expectedOutputFile: "testdata/oraclelinux-8-slim.json.golden",
-			testfile:           "testdata/fixtures/images/oraclelinux-8-slim.tar.gz",
+			name:     "opensuse leap 15.1",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:opensuse-leap-151",
+			input:    "testdata/fixtures/images/opensuse-leap-151.tar.gz",
+			golden:   "testdata/opensuse-leap-151.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, ubuntu:16.04",
-			imageTag:           "ubuntu:16.04",
-			expectedOutputFile: "testdata/ubuntu-1604.json.golden",
-			testfile:           "testdata/fixtures/images/ubuntu-1604.tar.gz",
+			name:     "photon 3.0",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:photon-30",
+			input:    "testdata/fixtures/images/photon-30.tar.gz",
+			golden:   "testdata/photon-30.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, ubuntu:18.04",
-			imageTag:           "ubuntu:18.04",
-			expectedOutputFile: "testdata/ubuntu-1804.json.golden",
-			testfile:           "testdata/fixtures/images/ubuntu-1804.tar.gz",
+			name:     "CBL-Mariner 1.0",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:mariner-1.0",
+			input:    "testdata/fixtures/images/mariner-1.0.tar.gz",
+			golden:   "testdata/mariner-1.0.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, ubuntu:18.04, with --ignore-unfixed option",
-			imageTag:           "ubuntu:18.04",
-			ignoreUnfixed:      true,
-			expectedOutputFile: "testdata/ubuntu-1804-ignore-unfixed.json.golden",
-			testfile:           "testdata/fixtures/images/ubuntu-1804.tar.gz",
+			name:     "busybox with Cargo.lock",
+			imageTag: "ghcr.io/aquasecurity/trivy-test-images:busybox-with-lockfile",
+			input:    "testdata/fixtures/images/busybox-with-lockfile.tar.gz",
+			golden:   "testdata/busybox-with-lockfile.json.golden",
 		},
 		{
-			name:               "happy path, valid image path, registry.redhat.io/ubi7",
-			imageTag:           "registry.redhat.io/ubi7",
-			expectedOutputFile: "testdata/ubi-7.json.golden",
-			testfile:           "testdata/fixtures/images/ubi-7.tar.gz",
-		},
-		{
-			name:               "happy path, valid image path, opensuse leap 15.1",
-			imageTag:           "opensuse/leap:latest",
-			expectedOutputFile: "testdata/opensuse-leap-151.json.golden",
-			testfile:           "testdata/fixtures/images/opensuse-leap-151.tar.gz",
-		},
-		{
-			name:               "happy path, valid image path, opensuse leap 42.3",
-			imageTag:           "opensuse/leap:42.3",
-			expectedOutputFile: "testdata/opensuse-leap-423.json.golden",
-			testfile:           "testdata/fixtures/images/opensuse-leap-423.tar.gz",
-		},
-		{
-			name:               "happy path, valid image path, photon 1.0",
-			imageTag:           "photon:1.0-20190823",
-			expectedOutputFile: "testdata/photon-10.json.golden",
-			testfile:           "testdata/fixtures/images/photon-10.tar.gz",
-		},
-		{
-			name:               "happy path, valid image path, photon 2.0",
-			imageTag:           "photon:2.0-20190726",
-			expectedOutputFile: "testdata/photon-20.json.golden",
-			testfile:           "testdata/fixtures/images/photon-20.tar.gz",
-		},
-		{
-			name:               "happy path, valid image path, photon 3.0",
-			imageTag:           "photon:3.0-20190823",
-			expectedOutputFile: "testdata/photon-30.json.golden",
-			testfile:           "testdata/fixtures/images/photon-30.tar.gz",
-		},
-		{
-			name:               "buxybox with Cargo.lock integration",
-			imageTag:           "busy-cargo:latest",
-			expectedOutputFile: "testdata/busybox-with-lockfile.json.golden",
-			testfile:           "testdata/fixtures/images/busybox-with-lockfile.tar.gz",
-		},
-		{
-			name:          "sad path, invalid image",
-			invalidImage:  true,
-			testfile:      "badimage:latest",
-			expectedError: "unable to inspect the image (index.docker.io/library/badimage:latest)",
+			name:         "sad path, invalid image",
+			invalidImage: true,
+			input:        "badimage:latest",
+			wantErr:      "unable to inspect the image (badimage:latest)",
 		},
 	}
 
 	// Set up testing DB
-	cacheDir := gunzipDB(t)
+	cacheDir := initDB(t)
+
+	// Set a temp dir so that modules will not be loaded
+	t.Setenv("XDG_DATA_HOME", cacheDir)
 
 	ctx := context.Background()
 	defer ctx.Done()
@@ -254,85 +206,73 @@ func TestRun_WithDockerEngine(t *testing.T) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	require.NoError(t, err)
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if !tc.invalidImage {
-				testfile, err := os.Open(tc.testfile)
-				require.NoError(t, err, tc.name)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !tt.invalidImage {
+				testfile, err := os.Open(tt.input)
+				require.NoError(t, err, tt.name)
 
 				// ensure image doesnt already exists
-				_, _ = cli.ImageRemove(ctx, tc.testfile, types.ImageRemoveOptions{
+				_, _ = cli.ImageRemove(ctx, tt.input, api.ImageRemoveOptions{
 					Force:         true,
 					PruneChildren: true,
 				})
 
 				// load image into docker engine
 				res, err := cli.ImageLoad(ctx, testfile, true)
-				require.NoError(t, err, tc.name)
+				require.NoError(t, err, tt.name)
 				io.Copy(io.Discard, res.Body)
 
 				// tag our image to something unique
-				err = cli.ImageTag(ctx, tc.imageTag, tc.testfile)
-				require.NoError(t, err, tc.name)
+				err = cli.ImageTag(ctx, tt.imageTag, tt.input)
+				require.NoError(t, err, tt.name)
 			}
 
-			of, err := os.CreateTemp("", "integration-docker-engine-output-file-*")
-			require.NoError(t, err, tc.name)
-			defer os.Remove(of.Name())
+			tmpDir := t.TempDir()
+			output := filepath.Join(tmpDir, "result.json")
 
-			// run trivy
-			app := commands.NewApp("dev")
-			trivyArgs := []string{"trivy"}
-			trivyArgs = append(trivyArgs, "--cache-dir", cacheDir)
-			if tc.withImageSubcommand {
-				trivyArgs = append(trivyArgs, "image")
+			osArgs := []string{"--cache-dir", cacheDir, "image",
+				"--skip-update", "--format=json", "--output", output}
+
+			if tt.ignoreUnfixed {
+				osArgs = append(osArgs, "--ignore-unfixed")
 			}
-
-			trivyArgs = append(trivyArgs, []string{"--skip-update", "--format=json", "--output", of.Name()}...)
-
-			if tc.ignoreUnfixed {
-				trivyArgs = append(trivyArgs, "--ignore-unfixed")
-			}
-			if len(tc.severity) != 0 {
-				trivyArgs = append(trivyArgs,
-					[]string{"--severity", strings.Join(tc.severity, ",")}...,
+			if len(tt.severity) != 0 {
+				osArgs = append(osArgs,
+					[]string{"--severity", strings.Join(tt.severity, ",")}...,
 				)
 			}
-			if len(tc.ignoreIDs) != 0 {
+			if len(tt.ignoreIDs) != 0 {
 				trivyIgnore := ".trivyignore"
-				err := os.WriteFile(trivyIgnore, []byte(strings.Join(tc.ignoreIDs, "\n")), 0444)
+				err = os.WriteFile(trivyIgnore, []byte(strings.Join(tt.ignoreIDs, "\n")), 0444)
 				assert.NoError(t, err, "failed to write .trivyignore")
 				defer os.Remove(trivyIgnore)
 			}
-			trivyArgs = append(trivyArgs, tc.testfile)
+			osArgs = append(osArgs, tt.input)
 
-			err = app.Run(trivyArgs)
-			switch {
-			case tc.expectedError != "":
-				require.NotNil(t, err)
-				assert.Contains(t, err.Error(), tc.expectedError, tc.name)
+			// Run Trivy
+			err = execute(osArgs)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr, tt.name)
 				return
-			default:
-				assert.NoError(t, err, tc.name)
 			}
 
+			assert.NoError(t, err, tt.name)
+
 			// check for vulnerability output info
-			got, err := io.ReadAll(of)
-			assert.NoError(t, err, tc.name)
-			want, err := os.ReadFile(tc.expectedOutputFile)
-			assert.NoError(t, err, tc.name)
-			assert.JSONEq(t, string(want), string(got), tc.name)
+			compareReports(t, tt.golden, output)
 
 			// cleanup
-			_, err = cli.ImageRemove(ctx, tc.testfile, types.ImageRemoveOptions{
+			_, err = cli.ImageRemove(ctx, tt.input, api.ImageRemoveOptions{
 				Force:         true,
 				PruneChildren: true,
 			})
-			_, err = cli.ImageRemove(ctx, tc.imageTag, types.ImageRemoveOptions{
+			_, err = cli.ImageRemove(ctx, tt.imageTag, api.ImageRemoveOptions{
 				Force:         true,
 				PruneChildren: true,
 			})
-			assert.NoError(t, err, tc.name)
+			assert.NoError(t, err, tt.name)
 		})
 	}
 }

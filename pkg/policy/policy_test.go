@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,8 +19,8 @@ import (
 	"k8s.io/utils/clock"
 	fake "k8s.io/utils/clock/testing"
 
+	"github.com/aquasecurity/trivy/pkg/oci"
 	"github.com/aquasecurity/trivy/pkg/policy"
-	"github.com/aquasecurity/trivy/pkg/utils"
 )
 
 type fakeLayer struct {
@@ -33,8 +34,28 @@ func (f fakeLayer) MediaType() (types.MediaType, error) {
 func newFakeLayer(t *testing.T) v1.Layer {
 	layer, err := tarball.LayerFromFile("testdata/bundle.tar.gz")
 	require.NoError(t, err)
+	require.NotNil(t, layer)
 
 	return fakeLayer{layer}
+}
+
+type brokenLayer struct {
+	v1.Layer
+}
+
+func (b brokenLayer) MediaType() (types.MediaType, error) {
+	return "application/vnd.cncf.openpolicyagent.layer.v1.tar+gzip", nil
+}
+
+func (b brokenLayer) Compressed() (io.ReadCloser, error) {
+	return nil, fmt.Errorf("compressed error")
+}
+
+func newBrokenLayer(t *testing.T) v1.Layer {
+	layer, err := tarball.LayerFromFile("testdata/bundle.tar.gz")
+	require.NoError(t, err)
+
+	return brokenLayer{layer}
 }
 
 func TestClient_LoadBuiltinPolicies(t *testing.T) {
@@ -48,15 +69,15 @@ func TestClient_LoadBuiltinPolicies(t *testing.T) {
 			name:     "happy path",
 			cacheDir: "testdata/happy",
 			want: []string{
-				"testdata/happy/policy/content/kubernetes",
-				"testdata/happy/policy/content/docker",
+				filepath.Join("testdata/happy/policy/content/kubernetes"),
+				filepath.Join("testdata/happy/policy/content/docker"),
 			},
 		},
 		{
 			name:     "empty roots",
 			cacheDir: "testdata/empty",
 			want: []string{
-				"testdata/empty/policy/content",
+				filepath.Join("testdata/empty/policy/content"),
 			},
 		},
 		{
@@ -74,10 +95,30 @@ func TestClient_LoadBuiltinPolicies(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			utils.SetCacheDir(tt.cacheDir)
-
+			// Mock image
 			img := new(fakei.FakeImage)
-			c, err := policy.NewClient(policy.WithImage(img))
+			img.LayersReturns([]v1.Layer{newFakeLayer(t)}, nil)
+			img.ManifestReturns(&v1.Manifest{
+				Layers: []v1.Descriptor{
+					{
+						MediaType: "application/vnd.cncf.openpolicyagent.layer.v1.tar+gzip",
+						Size:      100,
+						Digest: v1.Hash{
+							Algorithm: "sha256",
+							Hex:       "cba33656188782852f58993f45b68bfb8577f64cdcf02a604e3fc2afbeb5f2d8"},
+						Annotations: map[string]string{
+							"org.opencontainers.image.title": "bundle.tar.gz",
+						},
+					},
+				},
+			}, nil)
+
+			// Mock OCI artifact
+			mediaType := "application/vnd.cncf.openpolicyagent.layer.v1.tar+gzip"
+			art, err := oci.NewArtifact("repo", mediaType, true, true, oci.WithImage(img))
+			require.NoError(t, err)
+
+			c, err := policy.NewClient(tt.cacheDir, true, policy.WithOCIArtifact(art))
 			require.NoError(t, err)
 
 			got, err := c.LoadBuiltinPolicies()
@@ -112,8 +153,8 @@ func TestClient_NeedsUpdate(t *testing.T) {
 				h: v1.Hash{Algorithm: "sha256", Hex: "01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d"},
 			},
 			metadata: policy.Metadata{
-				Digest:           `sha256:922e50f14ab484f11ae65540c3d2d76009020213f1027d4331d31141575e5414`,
-				LastDownloadedAt: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
+				Digest:       `sha256:922e50f14ab484f11ae65540c3d2d76009020213f1027d4331d31141575e5414`,
+				DownloadedAt: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
 			},
 			want: false,
 		},
@@ -124,8 +165,8 @@ func TestClient_NeedsUpdate(t *testing.T) {
 				h: v1.Hash{Algorithm: "sha256", Hex: "01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d"},
 			},
 			metadata: policy.Metadata{
-				Digest:           `sha256:01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d`,
-				LastDownloadedAt: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
+				Digest:       `sha256:01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d`,
+				DownloadedAt: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
 			},
 			want: false,
 		},
@@ -136,8 +177,8 @@ func TestClient_NeedsUpdate(t *testing.T) {
 				h: v1.Hash{Algorithm: "sha256", Hex: "01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d"},
 			},
 			metadata: policy.Metadata{
-				Digest:           `sha256:922e50f14ab484f11ae65540c3d2d76009020213f1027d4331d31141575e5414`,
-				LastDownloadedAt: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
+				Digest:       `sha256:922e50f14ab484f11ae65540c3d2d76009020213f1027d4331d31141575e5414`,
+				DownloadedAt: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
 			},
 			want: true,
 		},
@@ -148,8 +189,8 @@ func TestClient_NeedsUpdate(t *testing.T) {
 				err: fmt.Errorf("error"),
 			},
 			metadata: policy.Metadata{
-				Digest:           `sha256:922e50f14ab484f11ae65540c3d2d76009020213f1027d4331d31141575e5414`,
-				LastDownloadedAt: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
+				Digest:       `sha256:922e50f14ab484f11ae65540c3d2d76009020213f1027d4331d31141575e5414`,
+				DownloadedAt: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
 			},
 			want:    false,
 			wantErr: true,
@@ -171,11 +212,25 @@ func TestClient_NeedsUpdate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up a temporary directory
 			tmpDir := t.TempDir()
-			utils.SetCacheDir(tmpDir)
 
 			// Mock image
 			img := new(fakei.FakeImage)
+			img.LayersReturns([]v1.Layer{newFakeLayer(t)}, nil)
 			img.DigestReturns(tt.digestReturns.h, tt.digestReturns.err)
+			img.ManifestReturns(&v1.Manifest{
+				Layers: []v1.Descriptor{
+					{
+						MediaType: "application/vnd.cncf.openpolicyagent.layer.v1.tar+gzip",
+						Size:      100,
+						Digest: v1.Hash{
+							Algorithm: "sha256",
+							Hex:       "cba33656188782852f58993f45b68bfb8577f64cdcf02a604e3fc2afbeb5f2d8"},
+						Annotations: map[string]string{
+							"org.opencontainers.image.title": "bundle.tar.gz",
+						},
+					},
+				},
+			}, nil)
 
 			// Create a policy directory
 			err := os.MkdirAll(filepath.Join(tmpDir, "policy"), os.ModePerm)
@@ -191,10 +246,14 @@ func TestClient_NeedsUpdate(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			// Assert results
-			c, err := policy.NewClient(policy.WithImage(img), policy.WithClock(tt.clock))
+			mediaType := "application/vnd.cncf.openpolicyagent.layer.v1.tar+gzip"
+			art, err := oci.NewArtifact("repo", mediaType, true, true, oci.WithImage(img))
 			require.NoError(t, err)
 
+			c, err := policy.NewClient(tmpDir, true, policy.WithOCIArtifact(art), policy.WithClock(tt.clock))
+			require.NoError(t, err)
+
+			// Assert results
 			got, err := c.NeedsUpdate()
 			assert.Equal(t, tt.wantErr, err != nil)
 			assert.Equal(t, tt.want, got)
@@ -203,8 +262,6 @@ func TestClient_NeedsUpdate(t *testing.T) {
 }
 
 func TestClient_DownloadBuiltinPolicies(t *testing.T) {
-	layer := newFakeLayer(t)
-
 	type digestReturns struct {
 		h   v1.Hash
 		err error
@@ -225,55 +282,39 @@ func TestClient_DownloadBuiltinPolicies(t *testing.T) {
 			name:  "happy path",
 			clock: fake.NewFakeClock(time.Date(2021, 1, 1, 1, 0, 0, 0, time.UTC)),
 			layersReturns: layersReturns{
-				layers: []v1.Layer{layer},
+				layers: []v1.Layer{newFakeLayer(t)},
 			},
 			digestReturns: digestReturns{
 				h: v1.Hash{Algorithm: "sha256", Hex: "01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d"},
 			},
 			want: &policy.Metadata{
-				Digest:           "sha256:01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d",
-				LastDownloadedAt: time.Date(2021, 1, 1, 1, 0, 0, 0, time.UTC),
+				Digest:       "sha256:01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d",
+				DownloadedAt: time.Date(2021, 1, 1, 1, 0, 0, 0, time.UTC),
 			},
 		},
 		{
-			name:  "sad: two layers",
+			name:  "sad: broken layer",
 			clock: fake.NewFakeClock(time.Date(2021, 1, 1, 1, 0, 0, 0, time.UTC)),
 			layersReturns: layersReturns{
-				layers: []v1.Layer{layer, layer},
-			},
-			want: &policy.Metadata{
-				Digest:           "sha256:01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d",
-				LastDownloadedAt: time.Date(2021, 1, 1, 1, 0, 0, 0, time.UTC),
-			},
-			wantErr: "OPA bundle must be a single layer",
-		},
-		{
-			name:  "sad: Layers returns an error",
-			clock: fake.NewFakeClock(time.Date(2021, 1, 1, 1, 0, 0, 0, time.UTC)),
-			layersReturns: layersReturns{
-				err: fmt.Errorf("error"),
+				layers: []v1.Layer{newBrokenLayer(t)},
 			},
 			digestReturns: digestReturns{
 				h: v1.Hash{Algorithm: "sha256", Hex: "01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d"},
 			},
-			want: &policy.Metadata{
-				Digest:           "sha256:01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d",
-				LastDownloadedAt: time.Date(2021, 1, 1, 1, 0, 0, 0, time.UTC),
-			},
-			wantErr: "OCI layer error",
+			wantErr: "compressed error",
 		},
 		{
 			name:  "sad: Digest returns an error",
 			clock: fake.NewFakeClock(time.Date(2021, 1, 1, 1, 0, 0, 0, time.UTC)),
 			layersReturns: layersReturns{
-				layers: []v1.Layer{layer},
+				layers: []v1.Layer{newFakeLayer(t)},
 			},
 			digestReturns: digestReturns{
 				err: fmt.Errorf("error"),
 			},
 			want: &policy.Metadata{
-				Digest:           "sha256:01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d",
-				LastDownloadedAt: time.Date(2021, 1, 1, 1, 0, 0, 0, time.UTC),
+				Digest:       "sha256:01e033e78bd8a59fa4f4577215e7da06c05e1152526094d8d79d2aa06e98cb9d",
+				DownloadedAt: time.Date(2021, 1, 1, 1, 0, 0, 0, time.UTC),
 			},
 			wantErr: "digest error",
 		},
@@ -282,14 +323,32 @@ func TestClient_DownloadBuiltinPolicies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tempDir := t.TempDir()
-			utils.SetCacheDir(tempDir)
 
 			// Mock image
 			img := new(fakei.FakeImage)
 			img.DigestReturns(tt.digestReturns.h, tt.digestReturns.err)
 			img.LayersReturns(tt.layersReturns.layers, tt.layersReturns.err)
+			img.ManifestReturns(&v1.Manifest{
+				Layers: []v1.Descriptor{
+					{
+						MediaType: "application/vnd.cncf.openpolicyagent.layer.v1.tar+gzip",
+						Size:      100,
+						Digest: v1.Hash{
+							Algorithm: "sha256",
+							Hex:       "cba33656188782852f58993f45b68bfb8577f64cdcf02a604e3fc2afbeb5f2d8"},
+						Annotations: map[string]string{
+							"org.opencontainers.image.title": "bundle.tar.gz",
+						},
+					},
+				},
+			}, nil)
 
-			c, err := policy.NewClient(policy.WithClock(tt.clock), policy.WithImage(img))
+			// Mock OCI artifact
+			mediaType := "application/vnd.cncf.openpolicyagent.layer.v1.tar+gzip"
+			art, err := oci.NewArtifact("repo", mediaType, true, true, oci.WithImage(img))
+			require.NoError(t, err)
+
+			c, err := policy.NewClient(tempDir, true, policy.WithClock(tt.clock), policy.WithOCIArtifact(art))
 			require.NoError(t, err)
 
 			err = c.DownloadBuiltinPolicies(context.Background())
